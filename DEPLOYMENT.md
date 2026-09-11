@@ -30,25 +30,46 @@ ssh -i your-key.pem ubuntu@YOUR_EC2_PUBLIC_IP
 ## Step 2 — Install System Dependencies
 
 ```bash
-sudo apt update && sudo apt upgrade -y
+# 1. Update system
+sudo dnf update -y
 
-# Node.js 18
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
+# 2. Node.js 18
+sudo dnf install -y nodejs npm
 
-# PostgreSQL
-sudo apt install -y postgresql postgresql-contrib
+# Check versions
+node -v
+npm -v
 
-# nginx (reverse proxy + static file server)
-sudo apt install -y nginx
+# 3. PostgreSQL
+sudo dnf install -y postgresql15 postgresql15-server
 
-# pm2 (keeps the Node backend running, restarts on crash/reboot)
+# Initialize PostgreSQL
+sudo postgresql-setup --initdb
+
+# Start PostgreSQL
+sudo systemctl enable --now postgresql
+
+# Check status
+sudo systemctl status postgresql
+
+# 4. Nginx
+sudo dnf install -y nginx
+
+# Start Nginx
+sudo systemctl enable --now nginx
+
+# Check status
+sudo systemctl status nginx
+
+# 5. PM2
 sudo npm install -g pm2
 
-# git (to pull your code, or use scp/upload instead)
-sudo apt install -y git unzip
-```
+# Check PM2
+pm2 -v
 
+
+# Check Git
+git --version
 ---
 
 ## Step 3 — Set Up PostgreSQL
