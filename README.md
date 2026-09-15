@@ -79,6 +79,8 @@ GRANT ALL PRIVILEGES ON DATABASE devopsai TO devopsai_user;
 cd backend
 cp .env.example .env
 # --> Edit .env: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, JWT_SECRET (see "What You Must Change" below)
+sudo dnf install nodejs -y
+sudo dnf install postgresql18 -y
 npm install
 npm run migrate      # creates all tables from models/schema.sql
 npm run dev          # starts on http://localhost:5000
@@ -89,6 +91,7 @@ npm run dev          # starts on http://localhost:5000
 cd frontend
 cp .env.example .env
 # --> Edit .env: VITE_API_URL (defaults to http://localhost:5000/api, fine for local dev)
+sudo dnf install nodejs -y
 npm install
 npm run dev           # starts on http://localhost:5173
 ```
