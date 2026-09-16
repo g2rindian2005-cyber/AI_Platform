@@ -73,18 +73,18 @@ CREATE USER devopsai_user WITH ENCRYPTED PASSWORD 'your_password';
 GRANT ALL PRIVILEGES ON DATABASE devopsai TO devopsai_user;
 \q
 ```
-run psql inside 
-
+### run psql inside 
+'''bash
 GRANT USAGE, CREATE ON SCHEMA public TO devopsai_user;
 
-Also give database privileges:
 
 GRANT ALL PRIVILEGES ON DATABASE devopsai TO devopsai_user;
 
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO devopsai_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO devopsai_user;   
- '''
 
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO devopsai_user;   
+ 
+'''
 ### 3. Backend
 ```bash
 cd backend
