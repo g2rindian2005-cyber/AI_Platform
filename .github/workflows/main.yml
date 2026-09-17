@@ -24,27 +24,49 @@ jobs:
             set -e
 
             # ==============================
-            # PROJECT DIRECTORY
+            # PROJECT SETTINGS
             # ==============================
-            APP_DIR=/home/ec2-user/AI_Platform
 
-            echo "== Checking project directory =="
-            if [ ! -d "$APP_DIR" ]; then
-              echo "ERROR: Project directory does not exist: $APP_DIR"
-              exit 1
+            APP_DIR="$HOME/AI_Platform"
+            REPO_URL="https://github.com/g2rindian2005-cyber/AI_Platform.git"
+
+            echo "Repository: $REPO_URL"
+            echo "Project directory: $APP_DIR"
+
+            # ==============================
+            # CLONE OR UPDATE REPOSITORY
+            # ==============================
+
+            if [ ! -d "$APP_DIR/.git" ]; then
+
+              echo "== Repository not found =="
+              echo "== Cloning repository =="
+
+              rm -rf "$APP_DIR"
+
+              git clone "$REPO_URL" "$APP_DIR"
+
+            else
+
+              echo "== Repository already exists =="
+              echo "== Pulling latest code =="
+
+              cd "$APP_DIR"
+
+              git fetch origin
+              git reset --hard origin/main
+
             fi
 
             cd "$APP_DIR"
 
-            echo "== Current directory =="
+            echo "== Current project =="
             pwd
 
-            echo "== Pulling latest code =="
-            git pull origin main
+            # ==============================
+            # BACKEND ENV
+            # ==============================
 
-            # ==============================
-            # BACKEND ENVIRONMENT
-            # ==============================
             echo "== Writing backend/.env =="
 
             cat > "$APP_DIR/backend/.env" <<'EOF'
@@ -54,8 +76,9 @@ jobs:
             chmod 600 "$APP_DIR/backend/.env"
 
             # ==============================
-            # FRONTEND ENVIRONMENT
+            # FRONTEND ENV
             # ==============================
+
             echo "== Writing frontend/.env =="
 
             cat > "$APP_DIR/frontend/.env" <<'EOF'
@@ -65,7 +88,8 @@ jobs:
             # ==============================
             # BACKEND
             # ==============================
-            echo "== Backend: install dependencies =="
+
+            echo "== Installing backend =="
 
             cd "$APP_DIR/backend"
 
@@ -81,20 +105,22 @@ jobs:
             # ==============================
             # FRONTEND
             # ==============================
-            echo "== Frontend: install dependencies =="
+
+            echo "== Installing frontend =="
 
             cd "$APP_DIR/frontend"
 
             npm install
 
-            echo "== Frontend: build =="
+            echo "== Building frontend =="
 
             npm run build
 
             # ==============================
             # NGINX
             # ==============================
-            echo "== Publishing frontend to Nginx =="
+
+            echo "== Publishing frontend =="
 
             sudo mkdir -p /var/www/devopsai
 
@@ -105,12 +131,13 @@ jobs:
             # ==============================
             # HEALTH CHECK
             # ==============================
-            echo "== Backend health check =="
+
+            echo "== Health check =="
 
             sleep 2
 
             curl -f http://localhost:5000/api/health
 
-            echo "================================="
+            echo "================================"
             echo "✅ DEPLOYMENT SUCCESSFUL"
-            echo "================================="
+            echo "================================"
