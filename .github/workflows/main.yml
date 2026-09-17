@@ -24,21 +24,19 @@ jobs:
 
             APP_DIR="$HOME/AI_Platform"
 
-            echo "==> Installing required packages"
+            echo "======================================"
+            echo "🚀 AI PLATFORM DEPLOYMENT"
+            echo "======================================"
 
-            # Git
+            # Install required packages
             command -v git >/dev/null 2>&1 || sudo dnf install -y git
 
-            # Node.js 20
             if ! command -v node >/dev/null 2>&1; then
               curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
               sudo dnf install -y nodejs
             fi
 
-            # PM2
             command -v pm2 >/dev/null 2>&1 || sudo npm install -g pm2
-
-            # Nginx
             command -v nginx >/dev/null 2>&1 || sudo dnf install -y nginx
 
             echo "Node: $(node -v)"
@@ -46,7 +44,7 @@ jobs:
             echo "Git: $(git --version)"
             echo "PM2: $(pm2 -v)"
 
-            # Clone / update project
+            # Clone or update repository
             if [ ! -d "$APP_DIR/.git" ]; then
               rm -rf "$APP_DIR"
               git clone https://github.com/g2rindian2005-cyber/AI_Platform.git "$APP_DIR"
@@ -56,40 +54,109 @@ jobs:
               git reset --hard origin/main
             fi
 
-            # Backend environment
+            # Check project folders
+            test -f "$APP_DIR/backend/package.json"
+            test -f "$APP_DIR/frontend/package.json"
+
+            # Backend .env
             printf '%s\n' '${{ secrets.BACKEND_ENV }}' > "$APP_DIR/backend/.env"
             chmod 600 "$APP_DIR/backend/.env"
 
-            # Frontend environment
+            # Frontend .env
             printf '%s\n' '${{ secrets.FRONTEND_ENV }}' > "$APP_DIR/frontend/.env"
 
-            # Backend
+            # ==============================
+            # BACKEND
+            # ==============================
+
             cd "$APP_DIR/backend"
-            npm install --omit=dev
+
+            if [ -f package-lock.json ]; then
+              npm ci --omit=dev
+            else
+              npm install --omit=dev
+            fi
 
             pm2 delete devopsai-backend 2>/dev/null || true
             pm2 start server.js --name devopsai-backend --update-env
             pm2 save
 
-            # Wait for backend
+            echo "Waiting for backend..."
             sleep 5
+
             curl -f http://127.0.0.1:5000/api/health
 
-            # Frontend
+            # ==============================
+            # FRONTEND
+            # ==============================
+
             cd "$APP_DIR/frontend"
-            npm install
+
+            if [ -f package-lock.json ]; then
+              npm ci
+            else
+              npm install
+            fi
+
             npm run build
 
-            # Nginx
+            test -f "$APP_DIR/frontend/dist/index.html"
+
+            # ==============================
+            # NGINX
+            # ==============================
+
             sudo mkdir -p /var/www/devopsai
             sudo rm -rf /var/www/devopsai/*
-            sudo cp -r dist/. /var/www/devopsai/
+            sudo cp -r "$APP_DIR/frontend/dist/." /var/www/devopsai/
             sudo chmod -R 755 /var/www/devopsai
 
+            # Remove default Nginx configuration
+            sudo rm -f /etc/nginx/conf.d/default.conf
+
+            # Create application Nginx configuration
+            sudo tee /etc/nginx/conf.d/devopsai.conf > /dev/null <<'EOF'
+            server {
+                listen 80;
+                server_name _;
+
+                root /var/www/devopsai;
+                index index.html;
+
+                location /api/ {
+                    proxy_pass http://127.0.0.1:5000;
+                    proxy_http_version 1.1;
+
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                }
+
+                location / {
+                    try_files $uri $uri/ /index.html;
+                }
+            }
+            EOF
+
+            # Test and restart Nginx
             sudo nginx -t
             sudo systemctl enable nginx
             sudo systemctl restart nginx
 
-            echo "================================"
-            echo "DEPLOYMENT SUCCESSFUL"
-            echo "================================"
+            # Final checks
+            echo "Checking frontend..."
+            curl -f http://127.0.0.1/
+
+            echo ""
+            echo "Checking backend..."
+            curl -f http://127.0.0.1/api/health
+
+            echo ""
+            echo "PM2 status:"
+            pm2 status
+
+            echo ""
+            echo "======================================"
+            echo "✅ DEPLOYMENT SUCCESSFUL"
+            echo "======================================"
