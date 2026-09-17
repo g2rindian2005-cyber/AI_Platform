@@ -1,9 +1,10 @@
-name: Deploy to EC2
+name: Deploy AI Platform to EC2
 
 on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 jobs:
@@ -11,63 +12,180 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy over SSH
+      - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.0
+
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          command_timeout: 10m
+
+          command_timeout: 20m
 
           script: |
             set -e
 
-            # ==============================
-            # PROJECT SETTINGS
-            # ==============================
+            echo "======================================"
+            echo "🚀 AI PLATFORM DEPLOYMENT STARTED"
+            echo "======================================"
+
+            # ------------------------------------------------
+            # VARIABLES
+            # ------------------------------------------------
 
             APP_DIR="$HOME/AI_Platform"
             REPO_URL="https://github.com/g2rindian2005-cyber/AI_Platform.git"
+            BRANCH="main"
 
             echo "Repository: $REPO_URL"
-            echo "Project directory: $APP_DIR"
+            echo "Application: $APP_DIR"
 
-            # ==============================
-            # CLONE OR UPDATE REPOSITORY
-            # ==============================
+            # ------------------------------------------------
+            # 1. INSTALL REQUIRED SOFTWARE
+            # ------------------------------------------------
+
+            echo ""
+            echo "==> Checking Git..."
+
+            if ! command -v git >/dev/null 2>&1; then
+              echo "Git not found. Installing Git..."
+
+              if command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y git
+              elif command -v yum >/dev/null 2>&1; then
+                sudo yum install -y git
+              else
+                echo "ERROR: Cannot find dnf or yum"
+                exit 1
+              fi
+            fi
+
+            echo "Git version:"
+            git --version
+
+
+            echo ""
+            echo "==> Checking Node.js..."
+
+            if ! command -v node >/dev/null 2>&1; then
+              echo "ERROR: Node.js is not installed on EC2."
+              echo "Install Node.js 20 before running deployment."
+              exit 1
+            fi
+
+            node --version
+            npm --version
+
+
+            echo ""
+            echo "==> Checking PM2..."
+
+            if ! command -v pm2 >/dev/null 2>&1; then
+              echo "PM2 not found. Installing PM2..."
+
+              sudo npm install -g pm2
+
+              # Make sure PM2 is available
+              export PATH="$PATH:$(npm prefix -g)/bin"
+            fi
+
+            pm2 --version
+
+
+            echo ""
+            echo "==> Checking Nginx..."
+
+            if ! command -v nginx >/dev/null 2>&1; then
+              echo "ERROR: Nginx is not installed."
+              exit 1
+            fi
+
+            nginx -v
+
+
+            # ------------------------------------------------
+            # 2. CLONE OR UPDATE REPOSITORY
+            # ------------------------------------------------
+
+            echo ""
+            echo "==> Preparing application..."
 
             if [ ! -d "$APP_DIR/.git" ]; then
 
-              echo "== Repository not found =="
-              echo "== Cloning repository =="
+              echo "Repository does not exist."
+              echo "Cloning repository..."
 
               rm -rf "$APP_DIR"
 
-              git clone "$REPO_URL" "$APP_DIR"
+              git clone \
+                --branch "$BRANCH" \
+                "$REPO_URL" \
+                "$APP_DIR"
 
             else
 
-              echo "== Repository already exists =="
-              echo "== Pulling latest code =="
+              echo "Repository already exists."
+              echo "Updating repository..."
 
               cd "$APP_DIR"
 
-              git fetch origin
-              git reset --hard origin/main
+              git fetch origin "$BRANCH"
+
+              git reset --hard "origin/$BRANCH"
+
+              git clean -fd
 
             fi
 
+
             cd "$APP_DIR"
 
-            echo "== Current project =="
+            echo ""
+            echo "Current directory:"
             pwd
 
-            # ==============================
-            # BACKEND ENV
-            # ==============================
+            echo ""
+            echo "Latest commit:"
+            git log -1 --oneline
 
-            echo "== Writing backend/.env =="
+
+            # ------------------------------------------------
+            # 3. CHECK PROJECT STRUCTURE
+            # ------------------------------------------------
+
+            echo ""
+            echo "==> Checking project structure..."
+
+            if [ ! -d "$APP_DIR/backend" ]; then
+              echo "ERROR: backend directory not found."
+              exit 1
+            fi
+
+            if [ ! -d "$APP_DIR/frontend" ]; then
+              echo "ERROR: frontend directory not found."
+              exit 1
+            fi
+
+            if [ ! -f "$APP_DIR/backend/package.json" ]; then
+              echo "ERROR: backend/package.json not found."
+              exit 1
+            fi
+
+            if [ ! -f "$APP_DIR/frontend/package.json" ]; then
+              echo "ERROR: frontend/package.json not found."
+              exit 1
+            fi
+
+            echo "Project structure OK."
+
+
+            # ------------------------------------------------
+            # 4. CREATE BACKEND .ENV
+            # ------------------------------------------------
+
+            echo ""
+            echo "==> Creating backend .env..."
 
             cat > "$APP_DIR/backend/.env" <<'EOF'
             ${{ secrets.BACKEND_ENV }}
@@ -75,69 +193,262 @@ jobs:
 
             chmod 600 "$APP_DIR/backend/.env"
 
-            # ==============================
-            # FRONTEND ENV
-            # ==============================
+            echo "Backend .env created."
 
-            echo "== Writing frontend/.env =="
+
+            # ------------------------------------------------
+            # 5. CREATE FRONTEND .ENV
+            # ------------------------------------------------
+
+            echo ""
+            echo "==> Creating frontend .env..."
 
             cat > "$APP_DIR/frontend/.env" <<'EOF'
             ${{ secrets.FRONTEND_ENV }}
             EOF
 
-            # ==============================
-            # BACKEND
-            # ==============================
+            chmod 600 "$APP_DIR/frontend/.env"
 
-            echo "== Installing backend =="
+            echo "Frontend .env created."
+
+
+            # ------------------------------------------------
+            # 6. BACKEND DEPLOYMENT
+            # ------------------------------------------------
+
+            echo ""
+            echo "======================================"
+            echo "🚀 DEPLOYING BACKEND"
+            echo "======================================"
 
             cd "$APP_DIR/backend"
 
-            npm install --production
+            echo ""
+            echo "Installing backend dependencies..."
 
-            echo "== Restarting backend =="
+            if [ -f package-lock.json ]; then
+              npm ci --omit=dev
+            else
+              npm install --omit=dev
+            fi
 
-            pm2 restart devopsai-backend --update-env || \
-              pm2 start server.js --name devopsai-backend
+
+            # ------------------------------------------------
+            # 7. STOP OLD BACKEND
+            # ------------------------------------------------
+
+            echo ""
+            echo "Stopping old backend..."
+
+            pm2 stop devopsai-backend 2>/dev/null || true
+            pm2 delete devopsai-backend 2>/dev/null || true
+
+
+            # ------------------------------------------------
+            # 8. START BACKEND
+            # ------------------------------------------------
+
+            echo ""
+            echo "Starting backend..."
+
+            pm2 start server.js \
+              --name devopsai-backend \
+              --update-env
 
             pm2 save
 
-            # ==============================
-            # FRONTEND
-            # ==============================
 
-            echo "== Installing frontend =="
+            # ------------------------------------------------
+            # 9. CHECK BACKEND PROCESS
+            # ------------------------------------------------
+
+            echo ""
+            echo "Backend PM2 status:"
+
+            pm2 status
+
+
+            # ------------------------------------------------
+            # 10. WAIT FOR BACKEND
+            # ------------------------------------------------
+
+            echo ""
+            echo "Waiting for backend..."
+
+            sleep 5
+
+
+            # ------------------------------------------------
+            # 11. BACKEND HEALTH CHECK
+            # ------------------------------------------------
+
+            echo ""
+            echo "Checking backend health..."
+
+            for i in {1..10}
+            do
+
+              if curl -fsS http://127.0.0.1:5000/api/health; then
+                echo ""
+                echo "✅ Backend health check successful."
+                break
+              fi
+
+              echo "Backend not ready. Attempt $i/10..."
+              sleep 3
+
+              if [ "$i" -eq 10 ]; then
+                echo ""
+                echo "❌ Backend health check failed."
+
+                echo ""
+                echo "PM2 logs:"
+                pm2 logs devopsai-backend --lines 50 --nostream || true
+
+                exit 1
+              fi
+
+            done
+
+
+            # ------------------------------------------------
+            # 12. FRONTEND DEPLOYMENT
+            # ------------------------------------------------
+
+            echo ""
+            echo "======================================"
+            echo "🚀 DEPLOYING FRONTEND"
+            echo "======================================"
 
             cd "$APP_DIR/frontend"
 
-            npm install
+            echo ""
+            echo "Installing frontend dependencies..."
 
-            echo "== Building frontend =="
+            if [ -f package-lock.json ]; then
+              npm ci
+            else
+              npm install
+            fi
+
+
+            # ------------------------------------------------
+            # 13. BUILD FRONTEND
+            # ------------------------------------------------
+
+            echo ""
+            echo "Building frontend..."
 
             npm run build
 
-            # ==============================
-            # NGINX
-            # ==============================
 
-            echo "== Publishing frontend =="
+            # ------------------------------------------------
+            # 14. CHECK FRONTEND BUILD
+            # ------------------------------------------------
+
+            if [ ! -d "$APP_DIR/frontend/dist" ]; then
+              echo "❌ Frontend dist directory was not created."
+              exit 1
+            fi
+
+            echo "Frontend build successful."
+
+
+            # ------------------------------------------------
+            # 15. DEPLOY FRONTEND TO NGINX
+            # ------------------------------------------------
+
+            echo ""
+            echo "Publishing frontend to Nginx..."
 
             sudo mkdir -p /var/www/devopsai
 
             sudo rm -rf /var/www/devopsai/*
 
-            sudo cp -r dist/* /var/www/devopsai/
+            sudo cp -r "$APP_DIR/frontend/dist/." /var/www/devopsai/
 
-            # ==============================
-            # HEALTH CHECK
-            # ==============================
 
-            echo "== Health check =="
+            # ------------------------------------------------
+            # 16. FIX NGINX PERMISSIONS
+            # ------------------------------------------------
 
-            sleep 2
+            sudo chmod -R 755 /var/www/devopsai
 
-            curl -f http://localhost:5000/api/health
 
-            echo "================================"
+            # ------------------------------------------------
+            # 17. TEST NGINX CONFIGURATION
+            # ------------------------------------------------
+
+            echo ""
+            echo "Testing Nginx configuration..."
+
+            sudo nginx -t
+
+
+            # ------------------------------------------------
+            # 18. RESTART NGINX
+            # ------------------------------------------------
+
+            echo ""
+            echo "Restarting Nginx..."
+
+            sudo systemctl restart nginx
+
+            sudo systemctl enable nginx
+
+
+            # ------------------------------------------------
+            # 19. CHECK NGINX
+            # ------------------------------------------------
+
+            echo ""
+            echo "Nginx status:"
+
+            sudo systemctl --no-pager status nginx || true
+
+
+            # ------------------------------------------------
+            # 20. FINAL BACKEND CHECK
+            # ------------------------------------------------
+
+            echo ""
+            echo "Final backend check..."
+
+            curl -fsS http://127.0.0.1:5000/api/health
+
+            echo ""
+
+
+            # ------------------------------------------------
+            # 21. FINAL PM2 CHECK
+            # ------------------------------------------------
+
+            echo ""
+            echo "Final PM2 status:"
+
+            pm2 status
+
+
+            # ------------------------------------------------
+            # DEPLOYMENT COMPLETE
+            # ------------------------------------------------
+
+            echo ""
+            echo "======================================"
             echo "✅ DEPLOYMENT SUCCESSFUL"
-            echo "================================"
+            echo "======================================"
+
+            echo ""
+            echo "Application directory:"
+            echo "$APP_DIR"
+
+            echo ""
+            echo "Backend:"
+            echo "http://127.0.0.1:5000"
+
+            echo ""
+            echo "Frontend:"
+            echo "Nginx /var/www/devopsai"
+
+            echo ""
+            echo "======================================"
