@@ -1,0 +1,61 @@
+name: Deploy to EC2
+
+# Runs on every push to main. Change the branch name below if yours is different (e.g. master).
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e   # stop immediately if any command fails
+
+            APP_DIR=~/AI_Platform          # <-- CHANGE if you cloned the repo under a different folder name
+
+            cd "$APP_DIR"
+
+            echo "== Pulling latest code =="
+            git pull origin main            # <-- CHANGE branch name here too if not "main"
+
+            echo "== Writing backend/.env from GitHub Secrets =="
+            cat > "$APP_DIR/backend/.env" <<'EOF'
+            ${{ secrets.BACKEND_ENV }}
+            EOF
+            chmod 600 "$APP_DIR/backend/.env"
+
+            echo "== Writing frontend/.env from GitHub Secrets =="
+            cat > "$APP_DIR/frontend/.env" <<'EOF'
+            ${{ secrets.FRONTEND_ENV }}
+            EOF
+
+            echo "== Backend: install + restart =="
+            cd "$APP_DIR/backend"
+            npm install --production
+            pm2 restart devopsai-backend --update-env || pm2 start server.js --name devopsai-backend
+            pm2 save
+
+            echo "== Frontend: install + build =="
+            cd "$APP_DIR/frontend"
+            npm install
+            npm run build
+
+            echo "== Frontend: publish to nginx web root =="
+            sudo mkdir -p /var/www/devopsai
+            sudo rm -rf /var/www/devopsai/*
+            sudo cp -r dist/* /var/www/devopsai/
+
+            echo "== Health check =="
+            sleep 2
+            curl -f http://localhost:5000/api/health
+
+            echo "✅ Deploy finished"
