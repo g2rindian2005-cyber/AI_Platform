@@ -1,61 +1,116 @@
 name: Deploy to EC2
 
-# Runs on every push to main. Change the branch name below if yours is different (e.g. master).
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          script: |
-            set -e   # stop immediately if any command fails
+          command_timeout: 10m
 
-            APP_DIR=~/AI_Platform          # <-- CHANGE if you cloned the repo under a different folder name
+          script: |
+            set -e
+
+            # ==============================
+            # PROJECT DIRECTORY
+            # ==============================
+            APP_DIR=/home/ec2-user/AI_Platform
+
+            echo "== Checking project directory =="
+            if [ ! -d "$APP_DIR" ]; then
+              echo "ERROR: Project directory does not exist: $APP_DIR"
+              exit 1
+            fi
 
             cd "$APP_DIR"
 
-            echo "== Pulling latest code =="
-            git pull origin main            # <-- CHANGE branch name here too if not "main"
+            echo "== Current directory =="
+            pwd
 
-            echo "== Writing backend/.env from GitHub Secrets =="
+            echo "== Pulling latest code =="
+            git pull origin main
+
+            # ==============================
+            # BACKEND ENVIRONMENT
+            # ==============================
+            echo "== Writing backend/.env =="
+
             cat > "$APP_DIR/backend/.env" <<'EOF'
             ${{ secrets.BACKEND_ENV }}
             EOF
+
             chmod 600 "$APP_DIR/backend/.env"
 
-            echo "== Writing frontend/.env from GitHub Secrets =="
+            # ==============================
+            # FRONTEND ENVIRONMENT
+            # ==============================
+            echo "== Writing frontend/.env =="
+
             cat > "$APP_DIR/frontend/.env" <<'EOF'
             ${{ secrets.FRONTEND_ENV }}
             EOF
 
-            echo "== Backend: install + restart =="
+            # ==============================
+            # BACKEND
+            # ==============================
+            echo "== Backend: install dependencies =="
+
             cd "$APP_DIR/backend"
+
             npm install --production
-            pm2 restart devopsai-backend --update-env || pm2 start server.js --name devopsai-backend
+
+            echo "== Restarting backend =="
+
+            pm2 restart devopsai-backend --update-env || \
+              pm2 start server.js --name devopsai-backend
+
             pm2 save
 
-            echo "== Frontend: install + build =="
+            # ==============================
+            # FRONTEND
+            # ==============================
+            echo "== Frontend: install dependencies =="
+
             cd "$APP_DIR/frontend"
+
             npm install
+
+            echo "== Frontend: build =="
+
             npm run build
 
-            echo "== Frontend: publish to nginx web root =="
+            # ==============================
+            # NGINX
+            # ==============================
+            echo "== Publishing frontend to Nginx =="
+
             sudo mkdir -p /var/www/devopsai
+
             sudo rm -rf /var/www/devopsai/*
+
             sudo cp -r dist/* /var/www/devopsai/
 
-            echo "== Health check =="
+            # ==============================
+            # HEALTH CHECK
+            # ==============================
+            echo "== Backend health check =="
+
             sleep 2
+
             curl -f http://localhost:5000/api/health
 
-            echo "✅ Deploy finished"
+            echo "================================="
+            echo "✅ DEPLOYMENT SUCCESSFUL"
+            echo "================================="
